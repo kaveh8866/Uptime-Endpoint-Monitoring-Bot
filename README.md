@@ -93,6 +93,11 @@ Read the first cycle as JSON, one line per probe:
  "endpoint":"CloudGuard Gateway","status_code":200,"latency_ms":3.41,"state":"up","transition":null}
 ```
 
+Before deploying for real, work through [`MANUAL_PREREQS.md`](MANUAL_PREREQS.md)
+(channels, endpoints, `.env`, OCI access). To hand the repository to a coding
+agent, point it at [`AGENT_GUIDE.md`](AGENT_GUIDE.md) — phased commands with
+stop conditions.
+
 Without Docker (Python 3.12+ and `pip install -r requirements.txt`):
 
 ```bash
