@@ -132,6 +132,12 @@ Leave all four channel variables empty. Alerts are written to the log as
 `alert suppressed (no channel configured)`. Valid for development and for the
 state-machine drill.
 
+> **The template ships non-empty placeholders**, so copying `.env.example` to
+> `.env` untouched makes all three channels look configured: the startup line
+> reports `"configured":["webhook","telegram","discord"]` and a real incident
+> attempts delivery to `example.invalid`. Blank every channel you are not using
+> — empty is the correct value for "off".
+
 ---
 
 ## 4. Configure what gets monitored — `configs/endpoints.yaml`

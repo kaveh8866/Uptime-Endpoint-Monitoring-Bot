@@ -175,8 +175,8 @@ can run it for days before deciding where alerts should go.
 | ----- | ----- | ----- |
 | **1** | Scaffold, worker loop, probes, SQLite state, notifiers, hardened compose | ✅ |
 | **2** | OpenTofu: OCI VCN, A1.Flex compute, cloud-init bootstrap | ✅ validated (not yet applied) |
-| **3** | Manual prerequisites + agent playbook | ⬜ |
-| **4** | Live drill: forced outage → alert → recovery, latency history | ⬜ |
+| **3** | Manual prerequisites + agent playbook | ✅ |
+| **4** | Live drill: forced outage → alert → recovery, latency history | ✅ webhook path (see `TEST_REPORT.md`) |
 | **5** | Optional read-only status page and `/metrics` for Prometheus | ⬜ |
 
 ---
