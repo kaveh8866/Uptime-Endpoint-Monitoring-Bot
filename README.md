@@ -1,77 +1,96 @@
 # Uptime Endpoint Monitoring Bot
 
-![Status](https://img.shields.io/badge/stage-2%20%C2%B7%20IaC-2EA043)
+![Status](https://img.shields.io/badge/status-portfolio%20%C2%B7%20cloudguard-2EA043)
+![Stage](https://img.shields.io/badge/stage-certified%20100%2F100-2EA043)
 ![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
-![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)
-![Dependencies](https://img.shields.io/badge/runtime%20deps-1%20(PyYAML)-blue)
-![Cost](https://img.shields.io/badge/cost-%240.00%20%2F%20month-brightgreen)
+![Docker](https://img.shields.io/badge/docker-compose%20v2-2496ED?logo=docker&logoColor=white)
+![IaC](https://img.shields.io/badge/IaC-OpenTofu%20%C2%B7%20OCI-FFD814?logo=terraform&logoColor=black)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-A small, self-hosted uptime monitor: it probes HTTP and TCP endpoints on their
-own schedules, records status codes and latency in SQLite, and tells you — over a
-webhook, Telegram or Discord — when something goes **down** and when it comes
-**back**. No SaaS account, no agent, no external database, one dependency.
+A self-hosted uptime monitor that watches HTTP(S) and TCP endpoints, records
+latency and status history, and only pages you when something is *actually*
+down — not when one packet is late.
 
-> Part of the **CloudGuard** portfolio: every project runs on free-tier
-> infrastructure, ships as a container, and can be handed to another agent
-> without an environment lock.
+One container, one dependency (PyYAML), 18 MiB of RAM, no inbound port, no
+database server to keep alive. The monitor cannot be the reason monitoring looks
+healthy.
 
 ---
 
-## Why this exists
+## Overview
 
-Uptime tools fail in two directions. Hosted ones are excellent until you need
-them to watch the wrong thing, or until the alert you care about costs a plan
-upgrade. Self-hosted ones usually assume a whole observability stack — Prometheus,
-Alertmanager, Grafana — to answer one question: *is this thing answering requests
-right now?*
+Most uptime tools fail in one of two ways: they alert on every blip, or they need
+a stack of their own (database, queue, dashboard) that can fail independently of
+the thing being watched. This bot takes the opposite position:
 
-This bot answers that question with ~450 lines of Python, a YAML file and a
-SQLite file, and it is explicit about the failure semantics that actually matter:
+- **Streaks, not samples.** `FAILURE_THRESHOLD` consecutive failures are required
+  before an endpoint is declared DOWN; a single timeout is noise.
+- **Transitions, not polls.** Only `down` and `recovered` dispatch a notification.
+  A five-hour outage produces two messages, not six hundred.
+- **Outbound only.** The process opens sockets and posts JSON. It never listens,
+  so there is no attack surface beyond SSH on the host.
+- **State is local and boring.** SQLite on a volume, two tables, no daemon.
 
-- **Streaks, not blips.** Three consecutive failures is an incident; one dropped
-  packet is not. The first success afterwards is a recovery.
-- **Honest state.** `unknown` is internal. A restart discovering a healthy
-  service is not a "recovery", so it does not page anyone.
-- **Alerting cannot break monitoring.** Every channel is best-effort: a dead
-  webhook logs a warning and the loop keeps probing.
+## Features
+
+| Feature | Detail |
+| --- | --- |
+| HTTP / HTTPS probes | `GET`, `HEAD`, custom headers, expected status sets, redirect-aware |
+| TCP probes | Port reachability for databases, DNS, SMTP, brokers |
+| Per-endpoint scheduling | Independent intervals from 5 s to hours, no drift between fast and slow checks |
+| Latency tracking | Per-probe milliseconds persisted to SQLite, plus warn/critical bands |
+| State machine | `unknown → up` silently; `down` / `recovered` only on threshold crossings |
+| Alert channels | Generic JSON webhook, Telegram, Discord — all optional, all independent |
+| Best-effort delivery | A dead channel logs a warning and never blocks or alters a check |
+| Hardened container | Read-only rootfs, non-root uid 999, 128 MB / 0.2 CPU caps, `no-new-privileges`, rotated logs |
+| Structured logs | One JSON object per line — ingestible by Loki, CloudWatch, or `jq` |
+| Bounded history | `HISTORY_RETENTION_DAYS` prune runs hourly; state rows are kept |
+| Portable by design | Docker + outbound sockets; IaC in OpenTofu with OCI, AWS and GCP mappings |
+| Zero-leak repo | `.env`, `*.db`, keys, state and local configs are gitignored and audited |
 
 ---
 
 ## Architecture
 
 ```text
-                    every endpoint on its own schedule
-                                │
-        ┌───────────────────────┴───────────────────────┐
-        │             uptime-bot (container)            │
-        │                                               │
-        │  config.py ──► checks.py ──► storage.py       │
-        │  endpoints.yaml   HTTP/TCP      SQLite        │
-        │  thresholds.yaml  latency+code  /data/uptime.db│
-        │                       │                       │
-        │                       ▼                       │
-        │              state machine (streaks)          │
-        │                       │                       │
-        │                       ▼                       │
-        │                 notifiers.py ─────────────┐   │
-        └───────────────────────────────────────────┼───┘
-                                                    │ HTTPS (outbound only)
-                        ┌───────────────────────────┴──────────┐
-                        ▼                    ▼                 ▼
-                   Webhook (JSON)       Telegram           Discord
+                        ┌──────────────────────────────────────────────┐
+                        │              Uptime Bot Worker               │
+                        │   scheduler · state machine · JSON logging   │
+                        └───────┬──────────────────────────────┬───────┘
+                                │                              │
+              (periodic HTTP/TCP check)              (state / latency log)
+                                │                              │
+                                ▼                              ▼
+                    ┌───────────────────────┐      ┌────────────────────────┐
+                    │   Target Endpoints    │      │  SQLite  /data/*.db    │
+                    │  http(s): url + code  │      │  checks (history)      │
+                    │  tcp: host + port     │      │  endpoint_state        │
+                    └───────────┬───────────┘      └───────────┬────────────┘
+                                │                              │
+                    (status code, RTT, error)        (streak reached threshold)
+                                │                              │
+                                └──────────────┬───────────────┘
+                                               ▼
+                                 ┌───────────────────────────┐
+                                 │  Alert Dispatcher         │
+                                 │  down | recovered only    │
+                                 └─────────────┬─────────────┘
+                                               │
+                        ┌──────────────────────┼──────────────────────┐
+                        ▼                      ▼                      ▼
+                  Telegram Bot           Discord Webhook       Generic JSON
+                  (sendMessage)          (content POST)        (Slack, n8n,
+                                                               Grafana, custom)
 ```
 
-| Module | Responsibility |
-| ------ | -------------- |
-| `src/bot/config.py` | Typed YAML loading, env overrides, validation with actionable errors |
-| `src/bot/checks.py` | HTTP(S) and TCP probes; timeouts and refused connections are results, not exceptions |
-| `src/bot/storage.py` | SQLite history (`checks`) and streak state (`endpoint_state`), WAL mode |
-| `src/bot/notifiers.py` | Webhook / Telegram / Discord delivery, best-effort by contract |
-| `src/bot/main.py` | Per-endpoint scheduling, state machine, JSON logging, graceful shutdown |
-| `configs/` | `endpoints.yaml` (watch list) and `thresholds.yaml` (when a wobble is an incident) |
-| `docker/` | Hardened compose stack: read-only rootfs, 128 MB / 0.2 CPU, log rotation |
-| `terraform/` | OpenTofu: VCN, SSH-only security list, Always Free A1.Flex host, cloud-init bootstrap |
+Host layout — the bot is the only service, and `/data` is its only writable path:
+
+```text
+docker/docker-compose.yml
+└── service: uptime-bot   (128 MB, 0.2 CPU, read-only rootfs, tmpfs /tmp)
+    ├── volume  uptime-data:/data        → SQLite state + history
+    └── bind    ../configs:/app/configs:ro → endpoints.yaml, thresholds.yaml
+```
 
 ---
 
@@ -81,22 +100,16 @@ SQLite file, and it is explicit about the failure semantics that actually matter
 git clone https://github.com/kaveh8866/Uptime-Endpoint-Monitoring-Bot.git
 cd Uptime-Endpoint-Monitoring-Bot
 
-cp .env.example .env        # leave channels empty for a log-only run
+cp .env.example .env          # blank the channels you do not use
 docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 docker compose -f docker/docker-compose.yml logs -f uptime-bot
 ```
 
-Read the first cycle as JSON, one line per probe:
+First cycle, one JSON line per endpoint:
 
 ```json
-{"ts":"2026-11-12T22:05:01Z","level":"info","logger":"bot.monitor","message":"check completed",
- "endpoint":"CloudGuard Gateway","status_code":200,"latency_ms":3.41,"state":"up","transition":null}
+{"ts":"2026-11-12T22:19:36Z","level":"info","logger":"bot.monitor","message":"check completed","endpoint":"Public API Edge","status_code":200,"latency_ms":43.95,"error":null,"state":"up","transition":null,"detail":"200 in 44ms"}
 ```
-
-Before deploying for real, work through [`MANUAL_PREREQS.md`](MANUAL_PREREQS.md)
-(channels, endpoints, `.env`, OCI access). To hand the repository to a coding
-agent, point it at [`AGENT_GUIDE.md`](AGENT_GUIDE.md) — phased commands with
-stop conditions.
 
 Without Docker (Python 3.12+ and `pip install -r requirements.txt`):
 
@@ -105,81 +118,274 @@ ENDPOINTS_FILE=configs/endpoints.yaml THRESHOLDS_FILE=configs/thresholds.yaml \
 STATE_DB_PATH=./uptime.db PYTHONPATH=src python -m bot.main
 ```
 
+Before deploying for real, work through [`MANUAL_PREREQS.md`](MANUAL_PREREQS.md)
+(credentials, channels, endpoints, `.env`, cloud access). To hand the repository
+to a coding agent, point it at [`AGENT_GUIDE.md`](AGENT_GUIDE.md) — phased
+commands with explicit stop conditions.
+
 ---
 
 ## Configuration
 
-**`configs/endpoints.yaml`** — what to watch:
+### `configs/endpoints.yaml` — what to watch
 
 ```yaml
 defaults:
-  interval_seconds: 60
-  timeout_seconds: 5
-  expected_status: [200]
+  interval_seconds: 60      # per-endpoint cadence (minimum 5)
+  timeout_seconds: 5        # a slow answer is a failed answer
+  expected_status: [200]    # anything else counts as unhealthy
 
 endpoints:
-  - name: CloudGuard Gateway
+  - name: Public API Edge       # unique — this is the alert's identity
     type: http
-    url: http://127.0.0.1:8080/health
+    url: https://api.example.com/health
     interval_seconds: 30
+    expected_status: [200, 204]
+    headers:
+      Accept: application/json
 
-  - name: Postgres Port
+  - name: Docs (HEAD)
+    type: http
+    url: https://docs.example.com/
+    method: HEAD
+    interval_seconds: 300
+
+  - name: Primary Postgres
     type: tcp
-    host: 127.0.0.1
+    host: db.example.com
     port: 5432
     timeout_seconds: 3
 ```
 
-**`configs/thresholds.yaml`** — when to alert:
+| Key | Applies to | Notes |
+| --- | --- | --- |
+| `name` | all | Must be unique; state is keyed by it |
+| `type` | all | `http` or `tcp` |
+| `url` | http | Scheme decides HTTP vs HTTPS |
+| `method` | http | Default `GET`; `HEAD` is cheaper for liveness |
+| `headers` | http | Sent verbatim (auth headers belong in `.env`, not here) |
+| `host` / `port` | tcp | Success means the TCP handshake completes |
+| `expected_status` | http | List of acceptable codes; redirects are followed |
+| `interval_seconds` | all | Floor of 5 s; per-endpoint override |
+| `timeout_seconds` | all | Per-probe budget |
 
-| Key | Default | Meaning |
-| --- | ------- | ------- |
-| `failure_threshold` | `3` | Consecutive failures before **DOWN** |
-| `recovery_threshold` | `1` | Consecutive successes before **RECOVERED** |
-| `latency_warn_ms` | `800` | Logged as a warning signal |
-| `latency_critical_ms` | `2000` | Log level raised to warning, visible in `docker logs` |
+Probes run **from inside the container**: `127.0.0.1` means the container itself,
+so a host-local service needs the host IP or `host.docker.internal`.
 
-**Environment** (`.env`, never committed):
+### `configs/thresholds.yaml` — when a wobble becomes an incident
 
-| Variable | Purpose |
-| -------- | ------- |
-| `ALERT_WEBHOOK_URL` | Any JSON endpoint (Slack, Teams, n8n, Grafana, custom) |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Telegram delivery |
-| `DISCORD_WEBHOOK_URL` | Discord webhook delivery |
-| `FAILURE_THRESHOLD`, `RECOVERY_THRESHOLD` | Override the YAML counts |
-| `HISTORY_RETENTION_DAYS` | History pruning window (default 14) |
-| `LOG_LEVEL` | `INFO` (default) / `DEBUG` / `WARNING` |
+```yaml
+failure_threshold: 3          # consecutive failures before DOWN
+recovery_threshold: 1         # consecutive successes before RECOVERED
+latency_warn_ms: 800
+latency_critical_ms: 2000
+```
 
-With no channel configured the bot is deliberately quiet: it logs
-`alert suppressed (no channel configured)` and keeps recording history, so you
-can run it for days before deciding where alerts should go.
+Override at run time with `FAILURE_THRESHOLD` / `RECOVERY_THRESHOLD`. Never ship
+`FAILURE_THRESHOLD=1`: one dropped packet would page someone for a healthy
+service.
+
+### Notification triggers
+
+Channels are environment-only. Empty means "off":
+
+```bash
+ALERT_WEBHOOK_URL=https://hooks.example.com/services/…     # any JSON endpoint
+TELEGRAM_BOT_TOKEN=…   TELEGRAM_CHAT_ID=…
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/…
+```
+
+The bot POSTs:
+
+```json
+{"text":"[CloudGuard][DOWN] Public API Edge: status 503","event":"down",
+ "endpoint":"Public API Edge","detail":"status 503","source":"uptime-bot"}
+```
+
+Telegram uses `sendMessage`, Discord uses `{"content": …}`. Delivery is
+best-effort: failures are logged as `alert channel unreachable` and the loop
+keeps probing.
+
+**Test a trigger without waiting for a real outage** — point one endpoint at a
+closed port, run with a 2-failure threshold against a local receiver, then start
+a listener to produce the recovery:
+
+```bash
+cat > configs/drill.local.yaml <<'YAML'
+defaults: {interval_seconds: 5, timeout_seconds: 2}
+endpoints:
+  - {name: Drill Target, type: tcp, host: 127.0.0.1, port: 8089}
+YAML
+
+docker compose --env-file .env -f docker/docker-compose.yml run --rm \
+  -e ENDPOINTS_FILE=/app/configs/drill.local.yaml \
+  -e FAILURE_THRESHOLD=2 -e RECOVERY_THRESHOLD=1 \
+  -e ALERT_WEBHOOK_URL=http://host.docker.internal:8912/alert \
+  uptime-bot sh -c '
+    python -m bot.main > /tmp/drill.log 2>&1 & bot=$!
+    sleep 14; python -m http.server 8089 --bind 127.0.0.1 >/dev/null 2>&1 & web=$!
+    sleep 12; kill -TERM $bot $web; wait $bot
+    grep -E "\"transition\"|alert dispatched" /tmp/drill.log'
+```
+
+Expected: one `"transition":"down"`, one `"transition":"recovered"`, and two
+`"delivered":["webhook"]`. Full walkthrough with a receiver that returns 200:
+[`AGENT_GUIDE.md`](AGENT_GUIDE.md) Phase 4–5. Measured results:
+[`TEST_REPORT.md`](TEST_REPORT.md).
 
 ---
 
-## Hardening
+## Cloud-agnostic portability
+
+The workload is provider-neutral: a Docker image that opens outbound sockets and
+posts JSON. Nothing in `src/`, `docker/` or `configs/` knows what a cloud is.
+Provider specifics live only in `terraform/modules/*`, behind an interface of
+provider-neutral variable names (`region`, `vcn_cidr`, `subnet_cidr`,
+`ssh_allowed_cidr`, `instance_shape`, `ssh_public_key`).
+
+> **Certification scope.** Production verification and testing certification are
+> **performed strictly on Oracle Cloud Infrastructure (OCI)** using Always Free /
+> trial credits. AWS and GCP are supported by design and documented below, but
+> they have **not** been deployed or certified — do not describe this project as
+> "AWS tested" or "GCP tested".
+
+| Concept | OCI (implemented) | AWS | GCP |
+| --- | --- | --- | --- |
+| Network | `oci_core_vcn` | `aws_vpc` | `google_compute_network` |
+| Gateway | `oci_core_internet_gateway` | `aws_internet_gateway` | implicit on a default-route VPC |
+| Routes | `oci_core_route_table` | `aws_route_table` + `aws_route` | `google_compute_route` |
+| Firewall | `oci_core_security_list` | `aws_security_group` + rules | `google_compute_firewall` |
+| Subnet | `oci_core_subnet` | `aws_subnet` | `google_compute_subnetwork` |
+| Instance | `oci_core_instance` (A1.Flex) | `aws_instance` (`t4g.small` / `t3.micro`) | `google_compute_instance` (`e2-micro`) |
+| Bootstrap | `metadata.user_data` | `user_data` | `metadata_startup_script` |
+| Public IP | VNIC `public_ip_address` | `aws_eip` / instance attribute | `access_config` `nat_ip` |
+
+### Migrating to AWS
+
+1. Copy `modules/network` → `modules/network-aws`, swap the five resources for
+   `aws_vpc`, `aws_internet_gateway`, `aws_route_table`/`aws_route`,
+   `aws_security_group` (+ ingress 22 from `ssh_allowed_cidr`, egress all) and
+   `aws_subnet`. Keep the same variable names and outputs.
+2. Copy `modules/compute` → `modules/compute-aws`: `aws_instance` with
+   `ami` (Ubuntu 24.04 arm64), `instance_type = "t4g.small"` or `"t3.micro"`,
+   `associate_public_ip_address = true`, and the same base64 cloud-init in
+   `user_data`.
+3. Point `main.tf` at the new module sources. `docker/`, `src/` and `configs/`
+   are unchanged — that is the test of the port.
+4. Budget for the **public IPv4 charge** (~$3.65/mo) and remember the current
+   free tier is credit-based ($200 / 6 months for new accounts), not 750 hours
+   forever.
+
+### Migrating to GCP
+
+1. `google_compute_network` + `google_compute_subnetwork` + `google_compute_firewall`
+   (allow `tcp:22` from `ssh_allowed_cidr`, egress all) replace the VCN block.
+2. `google_compute_instance` with `machine_type = "e2-micro"`,
+   `network_interface { access_config {} }` for the public IP, and
+   `metadata_startup_script` for the same cloud-init body.
+3. Keep the instance in `us-central1`, `us-west1` or `us-east1` to stay inside
+   the free tier; outside those regions e2-micro bills (~$6.11/mo).
+4. Egress beyond 1 GB/month is billed — this workload uses a fraction of that.
+
+Both migrations are mechanical because the security contract is identical
+everywhere: **SSH in, everything out**.
+
+---
+
+## 💰 Cross-Cloud Cost & Benchmark Estimation
+
+Footprint being priced — the measured Stage 4 workload, not a guess:
+
+| Parameter | Measured / chosen value |
+| --- | --- |
+| vCPU | 1 (container capped at 0.2 CPU; observed 0.01 %) |
+| RAM | 1 GB instance (container observed **18.19 MiB**) |
+| Block storage | 50 GB boot volume |
+| Check frequency | 5 endpoints; 30 s / 60 s / 120 s / 300 s → ~205 k checks/month |
+| Network egress | ~0.4 GB/month (1–2 KB per check + alerts) |
+| Disk growth | ~50 MB/month of SQLite history at 14-day retention |
+
+List/on-demand prices, US regions (us-east-1 / us-central1 / eu-frankfurt-1),
+November 2026. Vendor pricing changes; re-check with each provider's calculator
+before committing budget.
+
+| Cost line | OCI (Always Free) | OCI (Trial, $300 / 30 d) | AWS (`t3.micro`) | GCP (`e2-micro`) |
+| --- | --- | --- | --- | --- |
+| Compute, 730 h | **$0** (1,500 A1 OCPU-h + 9,000 GB-h/mo) | $0 until credit ends | $0 during credit ($200/6 mo) → **$7.59** | $0 in free-tier region → **$6.11** |
+| Block storage, 50 GB | **$0** (200 GB included) | $0 | 30 GB free, then ≈**$1.60** (20 GB × $0.08) | 30 GB free, then ≈**$0.80** (20 GB × $0.04) |
+| Egress, ≤1 GB/mo | **$0** (10 TB included) | $0 | **$0** (100 GB free, then $0.09/GB) | **$0** (1 GB free, then ≈$0.12/GB) |
+| Public IPv4 | **$0** (included) | $0 | ≈**$3.65** ($0.005/h) | $0 on free-tier e2-micro |
+| Monitoring / metrics | $0 (self-hosted, logs on disk) | $0 | $0 (CloudWatch optional, extra) | $0 (Cloud Monitoring optional, extra) |
+| **Effective monthly total** | **$0** | **$0** | **≈$12.84** after credits (7.59 + 1.60 + 3.65) | **≈$6.91** after free tier (6.11 + 0.80) |
+| Free-tier duration | Always Free | 30 days or credit exhaustion | $200 credit / 6 months (new accounts) | Always Free (eligible region) |
+
+**Benchmark notes**
+
+- Latency figures come from the local verification run (44 ms to `example.com`,
+  8 ms to `1.1.1.1:53`); a cloud host adds its own RTT to each target, so expect
+  numbers dominated by geography, not by the bot.
+- CPU is effectively idle: at 205 k checks/month the container spent 0.01 % of a
+  core, so even the smallest shape is oversized. Memory is the only real
+  constraint, and 18 MiB leaves room for a 5× larger watch list.
+- The metric that actually differs between providers is **egress allowance** and
+  **IPv4 billing**, not compute. OCI's 10 TB allowance is why this workload is
+  free there; on AWS the public address alone costs more than the compute.
+- Trial credits are not a free tier: when they expire, anything outside the
+  Always Free envelope starts billing. Destroy or right-size before that date.
+
+---
+
+## Security posture
 
 | Control | Implementation |
-| ------- | -------------- |
-| Least privilege | Container runs as the unprivileged `bot` user; `no-new-privileges` |
-| Immutable rootfs | `read_only: true`, with `/data` as the only writable mount and `/tmp` as a 16 MB tmpfs |
-| Resource ceiling | `mem_limit: 128m`, `cpus: 0.20`, `pids_limit: 128` — fits a 1 OCPU Always Free ARM VM |
-| No inbound surface | The bot only makes outbound connections; nothing is published |
-| Secret hygiene | `.env`, `*.db`, keys and local configs are gitignored; `.env.example` holds placeholders only |
-| Log hygiene | JSON lines with `json-file` rotation at 10 MB × 2 |
+| --- | --- |
+| No inbound surface | No listening port; only SSH (22) is open on the host |
+| Container hardening | `read_only: true`, tmpfs `/tmp`, non-root uid 999, `no-new-privileges`, `pids_limit`, memory/CPU caps |
+| Secret handling | `.env` only, gitignored; `.env.example` ships placeholders, never values |
+| Least privilege | Alerts are outbound HTTPS; the bot holds no cloud credential |
+| State protection | SQLite on a dedicated volume, gitignored; history pruned automatically |
+| Supply chain | One pinned dependency (`PyYAML==6.0.2`), no build toolchain in the image |
+| Audit trail | JSON logs with endpoint, state, transition and delivery result |
+
+Full scan results and sign-off: [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md).
+
+```bash
+# prove the boundary yourself
+git check-ignore -v .env
+git grep -nE "(TELEGRAM_BOT_TOKEN|DISCORD_WEBHOOK_URL)=.+" -- . ':!.env.example'
+```
 
 ---
 
-## Status
+## Project status
 
 | Stage | Scope | State |
-| ----- | ----- | ----- |
-| **1** | Scaffold, worker loop, probes, SQLite state, notifiers, hardened compose | ✅ |
-| **2** | OpenTofu: OCI VCN, A1.Flex compute, cloud-init bootstrap | ✅ validated (not yet applied) |
-| **3** | Manual prerequisites + agent playbook | ✅ |
-| **4** | Live drill: forced outage → alert → recovery, latency history | ✅ webhook path (see `TEST_REPORT.md`) |
-| **5** | Optional read-only status page and `/metrics` for Prometheus | ⬜ |
+| --- | --- | --- |
+| 1 | Scaffold, worker loop, probes, SQLite state, notifiers, hardened compose | ✅ |
+| 2 | OpenTofu: OCI VCN, A1.Flex compute, cloud-init bootstrap | ✅ validated (`tofu validate`, 4/4 posture tests) |
+| 3 | Manual prerequisites + agent playbook | ✅ |
+| 4 | Local drill: forced outage → alert → recovery, latency history | ✅ webhook path ([report](TEST_REPORT.md)) |
+| 5 | Live OCI deployment (apply → SSH → compose up → alert on host) | ⬜ pending OCI credentials |
+| 6 | Teardown audit | ✅ zero resources ([report](TEARDOWN_REPORT.md)) |
 
----
+The honest summary: the bot is verified running, the infrastructure is validated
+but **never applied**, and no live cloud alert has been delivered. Everything
+claims no more than that.
+
+## Repository layout
+
+```text
+src/bot/            config · checks · storage · notifiers · main
+configs/            endpoints.yaml, thresholds.yaml
+docker/             docker-compose.yml (hardened stack)
+terraform/          OpenTofu: modules/network, modules/compute, tests, cloud-init
+Dockerfile          python:3.12-slim, non-root, no build toolchain
+AGENT_GUIDE.md      phased playbook for AI coding agents
+MANUAL_PREREQS.md   operator checklist and credential recipes
+TEST_REPORT.md      Stage 4 measured results
+TEARDOWN_REPORT.md  Stage 6 zero-resource audit
+SECURITY_AUDIT.md   Stage 7 leak scan and sign-off
+```
 
 ## License
 
