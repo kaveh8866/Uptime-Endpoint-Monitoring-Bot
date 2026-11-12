@@ -49,7 +49,7 @@ venv/
 *.egg-info/
 
 # --- Terraform / OpenTofu state ---------------------------------------------
-**/.terraform/*
+**/.terraform/
 *.tfstate
 *.tfstate.*
 *.tfplan

@@ -1,0 +1,43 @@
+# =============================================================================
+# Uptime Endpoint Monitoring Bot — terraform.tfvars template (OCI)
+# =============================================================================
+# Copy to `terraform.tfvars` (gitignored), fill in your tenancy values, then:
+#   tofu init && tofu fmt -recursive && tofu validate && tofu plan && tofu apply
+#
+# Never commit the filled file: it carries your tenancy/user OCIDs.
+
+# --- Identity ----------------------------------------------------------------
+tenancy_ocid     = "your_tenancy_ocid_here"
+compartment_ocid = "your_compartment_ocid_here"
+region           = "eu-frankfurt-1"
+
+# Auth path 1 (recommended): a profile in ~/.oci/config.
+config_file_profile = "DEFAULT"
+
+# Auth path 2: inline API-key values instead of a profile.
+# user_ocid        = "your_user_ocid_here"
+# fingerprint      = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+# private_key_path = "C:/Users/you/.oci/oci_api_key.pem"
+
+# --- Access ------------------------------------------------------------------
+# Content of your PUBLIC key (one line starting with ssh-ed25519), not a path.
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... your-key-comment"
+
+# Your egress IP rather than the open internet: `curl -s https://ifconfig.me`
+ssh_allowed_cidr = "203.0.113.10/32"
+
+# --- Sizing ------------------------------------------------------------------
+# The bot container is capped at 128 MB / 0.2 CPU, so this is deliberately the
+# smallest Always Free A1 shape that still runs Ubuntu + Docker comfortably.
+instance_shape        = "VM.Standard.A1.Flex"
+instance_ocpus        = 1
+instance_memory_gbs   = 1
+boot_volume_size_gbs  = 50
+
+# Leave null to take the first availability domain; pin it if A1 capacity is
+# scarce in your region.
+# availability_domain = "Uocm:EU-FRANKFURT-1-AD-1"
+
+# --- Naming ------------------------------------------------------------------
+project_name = "cloudguard-uptime-bot"
+environment  = "dev"

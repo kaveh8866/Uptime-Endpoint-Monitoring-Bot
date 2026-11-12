@@ -18,7 +18,7 @@ to **stop** instead of improvising.
 | 2 | Start the stack and read one full cycle | ✅ |
 | 3 | Prove the state machine: forced outage → DOWN → RECOVERED | ⬜ |
 | 4 | Verify a real notification channel | ⬜ |
-| 5 | OCI provisioning with OpenTofu (`terraform/`) | ⬜ |
+| 5 | OCI provisioning with OpenTofu (`terraform/`) | ✅ written + validated, apply pending credentials |
 
 ---
 
@@ -131,6 +131,7 @@ warning and **keeps probing** — alerting must never stop monitoring.
 cd terraform
 cp terraform.tfvars.example terraform.tfvars   # tenancy, compartment, region, SSH key
 tofu init && tofu fmt -recursive && tofu validate
+tofu test                                     # offline posture check, no credentials
 tofu plan && tofu apply
 tofu output connection_endpoints
 ```
@@ -151,4 +152,5 @@ resources outside the project compartment.
   page someone for a healthy service.
 - Never restore or copy a production `uptime.db` into this repository: it carries
   your private endpoint names and history.
-- Never describe the bot as "verified on OCI" before Stage 2 has actually run.
+- Never describe the bot as "verified on OCI" before `tofu apply` has actually
+  run: `tofu validate` and `tofu test` prove the configuration, not the host.

@@ -1,6 +1,6 @@
 # Uptime Endpoint Monitoring Bot
 
-![Status](https://img.shields.io/badge/stage-1%20%C2%B7%20scaffold-2EA043)
+![Status](https://img.shields.io/badge/stage-2%20%C2%B7%20IaC-2EA043)
 ![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-1%20(PyYAML)-blue)
@@ -71,7 +71,7 @@ SQLite file, and it is explicit about the failure semantics that actually matter
 | `src/bot/main.py` | Per-endpoint scheduling, state machine, JSON logging, graceful shutdown |
 | `configs/` | `endpoints.yaml` (watch list) and `thresholds.yaml` (when a wobble is an incident) |
 | `docker/` | Hardened compose stack: read-only rootfs, 128 MB / 0.2 CPU, log rotation |
-| `terraform/` | Reserved for Stage 2 (OCI Always Free compute + SSH-only security list) |
+| `terraform/` | OpenTofu: VCN, SSH-only security list, Always Free A1.Flex host, cloud-init bootstrap |
 
 ---
 
@@ -169,7 +169,7 @@ can run it for days before deciding where alerts should go.
 | Stage | Scope | State |
 | ----- | ----- | ----- |
 | **1** | Scaffold, worker loop, probes, SQLite state, notifiers, hardened compose | ✅ |
-| **2** | OpenTofu: OCI VCN, A1.Flex compute, cloud-init bootstrap | ⬜ |
+| **2** | OpenTofu: OCI VCN, A1.Flex compute, cloud-init bootstrap | ✅ validated (not yet applied) |
 | **3** | Manual prerequisites + agent playbook | ⬜ |
 | **4** | Live drill: forced outage → alert → recovery, latency history | ⬜ |
 | **5** | Optional read-only status page and `/metrics` for Prometheus | ⬜ |
