@@ -1,0 +1,66 @@
+# Uptime Endpoint Monitoring Bot — container stack
+# One service. SQLite lives inside the bot (no second container to keep alive),
+# so "is the database up?" can never be the reason monitoring looks healthy.
+#
+# Run from the repository root:
+#   docker compose --env-file .env -f docker/docker-compose.yml up -d --build
+#
+# Relative paths resolve against this file's directory (docker/).
+
+name: cloudguard-uptime-bot
+
+x-log-rotation: &log-rotation
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "2"
+
+services:
+  uptime-bot:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: cloudguard/uptime-bot:local
+    container_name: cg-uptime
+    restart: unless-stopped
+
+    environment:
+      ENDPOINTS_FILE: /app/configs/endpoints.yaml
+      THRESHOLDS_FILE: /app/configs/thresholds.yaml
+      STATE_DB_PATH: /data/uptime.db
+      HISTORY_RETENTION_DAYS: ${HISTORY_RETENTION_DAYS:-14}
+      FAILURE_THRESHOLD: ${FAILURE_THRESHOLD:-3}
+      RECOVERY_THRESHOLD: ${RECOVERY_THRESHOLD:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Notification channels — all optional, empty means log-only.
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      TZ: ${TZ:-UTC}
+
+    volumes:
+      # SQLite state + history. The only writable path in the container.
+      - uptime-data:/data
+      # Watch list and thresholds: editable on the host, no rebuild required.
+      - ../configs:/app/configs:ro
+
+    # Sized for a 1 OCPU / 1 GB Always Free ARM instance: this bot is I/O bound
+    # and peaks at a few tens of MB of RSS with a handful of endpoints.
+    mem_limit: 128m
+    cpus: 0.20
+    pids_limit: 128
+
+    # Immutable root filesystem: code and config are read-only at runtime, so a
+    # compromised probe target cannot plant a persistent payload.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging: *log-rotation
+
+volumes:
+  uptime-data:

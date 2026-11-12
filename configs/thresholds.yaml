@@ -1,0 +1,20 @@
+# =============================================================================
+# Uptime Endpoint Monitoring Bot — alert thresholds
+# =============================================================================
+# Streaks, not single probes. One dropped packet is noise; three failed probes
+# in a row is an incident. Recovery is deliberately quicker than failure so a
+# flapping service does not leave you waiting for a green message.
+#
+# Override at runtime with FAILURE_THRESHOLD / RECOVERY_THRESHOLD env vars.
+
+# Consecutive failed probes before the endpoint is declared DOWN.
+failure_threshold: 3
+
+# Consecutive successful probes before a DOWN endpoint is declared RECOVERED.
+recovery_threshold: 1
+
+# Latency bands, in milliseconds. Warnings are logged on every slow probe;
+# crossing the critical band also marks the log line as a warning so it is
+# visible in `docker logs` without a dashboard.
+latency_warn_ms: 800
+latency_critical_ms: 2000

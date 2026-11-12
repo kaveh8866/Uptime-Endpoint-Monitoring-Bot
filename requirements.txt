@@ -1,0 +1,3 @@
+# Runtime dependencies — deliberately one.
+# HTTP, TCP, SQLite, JSON, signals: all standard library.
+PyYAML==6.0.2

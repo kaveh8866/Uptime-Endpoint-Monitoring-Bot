@@ -1,0 +1,75 @@
+# =============================================================================
+# Uptime Endpoint Monitoring Bot — zero-leak boundary
+# =============================================================================
+# Nothing that carries a token, a real endpoint list with private hosts, a
+# database or generated state may ever be committed.
+
+# --- Environment / credentials ----------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+keys/
+id_rsa
+id_ed25519
+credentials.json
+application_default_credentials.json
+*service-account*.json
+*.json_sa
+
+# --- Bot state (SQLite lives in the volume at runtime) ----------------------
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+state/
+uptime.db
+
+# --- Local configuration with real targets/secrets --------------------------
+# Keep the shipped example; treat any other local copy as private.
+configs/local/
+configs/*.local.yaml
+.env.local
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# --- Terraform / OpenTofu state ---------------------------------------------
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+crash.log
+override.tf
+override.tf.json
+
+# --- Logs --------------------------------------------------------------------
+logs/
+*.log
+
+# --- OS / editor noise -------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Node tooling (dashboard only; the bot itself is Python) ----------------
+node_modules/
+dist/

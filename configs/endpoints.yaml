@@ -1,0 +1,52 @@
+# =============================================================================
+# Uptime Endpoint Monitoring Bot — watch list
+# =============================================================================
+# Each entry is one probe. `defaults` applies to every endpoint; anything set on
+# an endpoint wins. Add as many as you like: the loop schedules each one
+# independently, so fast and slow checks coexist without drifting.
+#
+# type: http | tcp
+#   http -> needs `url` (+ optional `method`, `headers`, `expected_status`)
+#   tcp  -> needs `host` + `port`; success means the handshake completes
+
+defaults:
+  interval_seconds: 60      # how often each endpoint is probed
+  timeout_seconds: 5        # per-probe budget; a slow answer is a failed answer
+  expected_status: [200]    # any code not listed counts as unhealthy
+
+endpoints:
+  # --- HTTP checks ----------------------------------------------------------
+  - name: CloudGuard Gateway
+    type: http
+    url: http://127.0.0.1:8080/health
+    interval_seconds: 30
+    expected_status: [200]
+
+  - name: Public API Edge
+    type: http
+    url: https://example.com/
+    interval_seconds: 120
+    expected_status: [200]
+    headers:
+      Accept: text/html
+
+  - name: Docs (HEAD, redirects allowed as 200)
+    type: http
+    url: https://example.com/
+    method: HEAD
+    interval_seconds: 300
+
+  # --- TCP checks -----------------------------------------------------------
+  - name: Postgres Port (backup host)
+    type: tcp
+    host: 127.0.0.1
+    port: 5432
+    interval_seconds: 60
+    timeout_seconds: 3
+
+  - name: Public DNS over TCP
+    type: tcp
+    host: 1.1.1.1
+    port: 53
+    interval_seconds: 300
+    timeout_seconds: 3
