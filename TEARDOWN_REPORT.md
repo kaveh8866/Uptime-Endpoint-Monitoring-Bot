@@ -6,8 +6,9 @@ Recorded 2026-11-12 against commit `09677c7`.
 
 **No cloud infrastructure exists for this project, so the teardown destroyed
 nothing — because nothing was ever created.** `tofu destroy -auto-approve`
-returned `Destroy complete! Resources: 0 destroyed.` and there is no state file
-to destroy from. Project-attributable cloud spend is therefore zero, and no
+returned `Destroy complete! Resources: 0 destroyed.`; there was no populated
+state to destroy from, and the run left behind an empty state file (0 resources,
+0 outputs, serial 1). Project-attributable cloud spend is therefore zero, and no
 cleanup action was required to reach it.
 
 This is a statement about *this project's* resources only, not about the whole
@@ -18,11 +19,13 @@ projects) are outside this audit's reach — see "Limits" below.
 
 | Check | Command | Result |
 | --- | --- | --- |
-| No state file | `ls terraform/terraform.tfstate` | absent |
+| State **before** destroy | `ls terraform/terraform.tfstate` | absent — the configuration was never applied |
 | No state backup | `ls terraform/terraform.tfstate.backup` | absent |
 | No variables file | `ls terraform/terraform.tfvars` | absent (never applied) |
-| State inventory | `tofu state list` | `Error: No state file was found` |
+| State inventory before | `tofu state list` | `Error: No state file was found` |
 | Destroy | `tofu destroy -auto-approve` | `Destroy complete! Resources: 0 destroyed.` |
+| State **after** destroy | `terraform.tfstate` JSON | version 4, serial 1, **resources: 0**, outputs: 0 |
+| State inventory after | `tofu state list` | no entries, exit 0 |
 | Destroy plan | `tofu plan -destroy` | `No changes. No objects need to be destroyed.` |
 | Test leftovers | `ls terraform/errored_test.tfstate` | absent |
 
@@ -32,15 +35,26 @@ could evaluate the state rather than stop at variable prompting. No OCI API call
 was made and no credential was used — with an empty state there is nothing for
 OpenTofu to query.
 
+One detail worth recording: `tofu destroy` **writes an empty state file even when
+it destroys nothing**. That file is gitignored, contains no OCIDs or outputs
+(resources: 0), and is what makes `tofu state list` exit cleanly instead of
+erroring. "Zero resources" is therefore proven by an empty inventory, not by the
+absence of a file.
+
 ## Local artifact audit
 
-| Artifact | Count |
+| Artifact (project-scoped) | Count |
 | --- | --- |
-| Containers (`cg-uptime`, `cloudguard-*`, any `uptime-bot` run) | 0 |
-| Volumes (`cloudguard-uptime-bot_uptime-data`) | 0 |
-| Images (`cloudguard/*`) | 0 |
-| Docker networks | 0 |
+| Containers named `cg-uptime` | 0 |
+| Containers from `cloudguard/uptime-bot:local` (incl. `compose run` leftovers) | 0 |
+| Volumes matching `cloudguard` | 0 |
+| Images in `cloudguard/*` | 0 |
+| Docker networks matching `cloudguard` | 0 |
 | `.env` / `configs/drill.local.yaml` / SQLite files in the repository | 0 |
+
+The host itself is not empty — 11 containers and 18 volumes belong to unrelated
+work on this machine. They were left untouched: the audit is scoped to this
+project, and nothing outside it should be removed to make a number look better.
 
 Stage 4 ended with `docker compose down -v` plus `docker rmi`, which is why the
 local footprint is empty rather than merely stopped. `docker compose down`
@@ -62,6 +76,9 @@ removes the container and network and keeps the volume; the `-v` is what discard
   of MB on disk, no cloud cost). It is a local build cache, not infrastructure;
   delete it with `rm -rf terraform/.terraform` if you want the workspace pristine,
   at the cost of re-running `tofu init`.
+- **The empty `terraform.tfstate` remains** (2.8 KB, gitignored, no resources).
+  Deleting it is safe *because* the inventory is empty; it would not be safe if
+  it held anything.
 
 ## Procedure for a real deployment
 
