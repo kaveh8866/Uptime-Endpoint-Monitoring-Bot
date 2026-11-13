@@ -4,10 +4,10 @@ Recorded on 2026-11-12, Docker 29.8.1 on Windows, Git Bash, project commit
 `c9dcbe6`. Reproduce with the commands below; nothing here needs cloud
 credentials.
 
-> **Scope of certification:** these results are local, on one developer machine.
-> The production target and the only environment certified for hosting is
-> **Oracle Cloud Infrastructure (OCI)** with Always Free / trial credits — see
-> `MANUAL_PREREQS.md` §8. AWS and GCP are portable by design but untested.
+> **Scope of certification:** §1–§7 are local results on one developer machine.
+> §8 is a **live OCI deployment** (Ampere A1.Flex, Always Free envelope) and is
+> the only environment certified for hosting — see `MANUAL_PREREQS.md` §8. AWS
+> and GCP are portable by design but remain untested.
 
 ---
 
@@ -146,8 +146,9 @@ alerts once.
 
 - **Telegram and Discord delivery** — only the generic webhook path was
   exercised end-to-end. Those senders are code-reviewed, not proven.
-- **OCI deployment** — no `tofu apply` has run, so "works on the certified
-  target" remains unproven until Stage 5.
+- **OCI deployment** — no longer outstanding: Stage 5 ran on 2026-11-13 against
+  a real instance (§8). What is still unproven there is *durability*: the host
+  has been up for minutes, not days.
 - **Long-duration soak** — observation covered ~2 minutes, not days; retention
   pruning (`HISTORY_RETENTION_DAYS`, hourly task) has not fired.
 - **Restart policy behaviour** — `restart: unless-stopped` was not tested against
@@ -171,3 +172,89 @@ docker compose --env-file .env -f docker/docker-compose.yml run --rm \
 ```
 
 Teardown: `docker compose --env-file .env -f docker/docker-compose.yml down -v`
+
+---
+
+## 8. Live OCI deployment (Stage 5, 2026-11-13)
+
+Run against a real tenancy in `eu-frankfurt-1`, not a mock. Infrastructure came
+from `terraform/` unmodified; only `terraform.tfvars` (gitignored) supplied the
+credentials, SSH key and CIDR.
+
+### Provisioning
+
+| Step | Result |
+| --- | --- |
+| `tofu plan` | `Plan: 6 to add` — VCN, IGW, route table, security list, subnet, instance |
+| First `apply` in AD-1 | **`500-InternalError, Out of host capacity`** |
+| Retry in AD-2 | `Apply complete! Resources: 1 added` (44 s) |
+| Public IP | **129.159.30.105** (private 10.4.1.29) |
+| Shape | `VM.Standard.A1.Flex`, 1 OCPU / 1 GB, Ubuntu 24.04, `aarch64` |
+| `cloud-init status` | `done`; Docker 29.9.3 present |
+| SSH | `ssh ubuntu@129.159.30.105` with the ed25519 key |
+
+The capacity failure is the expected Always Free reality, not a configuration
+bug: the same plan succeeded unchanged in the next availability domain, with no
+switch to a paid shape.
+
+### Live monitoring from the cloud host
+
+```json
+{"ts":"2026-11-13T00:55:17Z","endpoint":"Public API Edge","status_code":200,"latency_ms":96.29,"state":"up","detail":"200 in 96ms"}
+{"ts":"2026-11-13T00:55:18Z","endpoint":"Docs (HEAD, redirects allowed as 200)","status_code":200,"latency_ms":76.58,"state":"up"}
+{"ts":"2026-11-13T00:58:11Z","endpoint":"Docs (HEAD, redirects allowed as 200)","status_code":200,"latency_ms":61.64,"state":"up"}
+{"ts":"2026-11-13T00:58:11Z","endpoint":"Public DNS over TCP","latency_ms":1.09,"state":"up","detail":"ok in 1ms"}
+```
+
+| Metric | Live value (Frankfurt) | Local reference (Stage 4) |
+| --- | --- | --- |
+| `example.com` GET | **97.4 ms avg** | 45.6 ms |
+| `example.com` HEAD | **69.1 ms avg** | 34.3 ms |
+| `1.1.1.1:53` TCP | **1.1 ms avg** | 7.8 ms |
+| History rows | 27 checks / 6 state rows | 22 / 6 |
+| Container memory | **19.82 MiB / 128 MiB** | 18.19 MiB |
+| Container CPU | 0.01 % | 0.01 % |
+
+Latency is dominated by geography, as predicted in the README cost section: the
+cloud host is slower to a US-anycast web endpoint and faster to a European DNS
+resolver. No published ports exist on the host — the security list's single
+ingress rule is 22/tcp, and Docker confirms nothing is listening.
+
+### Live alert delivery
+
+Same drill as §4, run on the instance, with the receiver in a container on the
+compose network:
+
+```json
+{"message":"check completed","endpoint":"Drill Target","state":"down","transition":"down","error":"tcp error: Connection refused"}
+{"message":"alert dispatched","event":"down","endpoint":"Drill Target","delivered":["webhook"],"configured":["webhook"]}
+{"message":"check completed","endpoint":"Drill Target","state":"up","transition":"recovered"}
+{"message":"alert dispatched","event":"recovered","endpoint":"Drill Target","delivered":["webhook"],"configured":["webhook"]}
+```
+
+`delivered:["webhook"]` means the receiver answered 2xx — verified twice, once
+for `down` and once for `recovered`. Final drill state: `up`, 0 failures,
+2 successes.
+
+### Two failures worth recording
+
+1. **First drill delivered nothing** (`delivered:[]`) because the webhook pointed
+   at `172.17.0.1` (`docker0`) while `compose run` joins its own bridge
+   (`172.18.0.1`), and the host firewall drops container-to-host traffic anyway.
+   Fixed by putting the receiver in a container on the same compose network and
+   addressing it by name (`http://cg-recv:8912/alert`). This is the correct local
+   pattern for a host with a 22-only security list.
+2. **The bot did not restart after the drill** until an explicit
+   `docker compose up -d`; `compose start` alone was not enough in that shell
+   sequence. Worth knowing before trusting `restart: unless-stopped` as a
+   recovery mechanism.
+
+### Current state
+
+The instance is **left running** for live monitoring: `129.159.30.105`, bot
+healthy, alerts armed (channels blank in `.env`, so log-only until you add a
+real one). To stop the spend:
+
+```bash
+cd terraform && tofu destroy -auto-approve
+```

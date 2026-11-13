@@ -118,6 +118,24 @@ ENDPOINTS_FILE=configs/endpoints.yaml THRESHOLDS_FILE=configs/thresholds.yaml \
 STATE_DB_PATH=./uptime.db PYTHONPATH=src python -m bot.main
 ```
 
+### Verified live deployment
+
+The reference deployment runs on OCI in `eu-frankfurt-1`, Always Free envelope:
+
+| | |
+| --- | --- |
+| Host | `129.159.30.105` (`VM.Standard.A1.Flex`, 1 OCPU / 1 GB, Ubuntu 24.04 aarch64) |
+| Access | `ssh ubuntu@129.159.30.105` — security list ingress is 22/tcp only |
+| Runtime | Docker 29.9.3, `cg-uptime` at **19.82 MiB / 128 MiB**, 0.01 % CPU |
+| Probes | `example.com` 97 ms GET / 69 ms HEAD, `1.1.1.1:53` 1.1 ms — from Frankfurt |
+| Alerts | live drill produced one `down` and one `recovered`, both `delivered:["webhook"]` |
+
+Provisioning detail worth knowing: AD-1 returned `Out of host capacity`; the same
+plan succeeded in AD-2 with no change and no paid shape. Full transcript:
+[`TEST_REPORT.md`](TEST_REPORT.md) §8.
+
+To stop the spend: `cd terraform && tofu destroy -auto-approve`.
+
 Before deploying for real, work through [`MANUAL_PREREQS.md`](MANUAL_PREREQS.md)
 (credentials, channels, endpoints, `.env`, cloud access). To hand the repository
 to a coding agent, point it at [`AGENT_GUIDE.md`](AGENT_GUIDE.md) — phased
@@ -365,12 +383,14 @@ git grep -nE "(TELEGRAM_BOT_TOKEN|DISCORD_WEBHOOK_URL)=.+" -- . ':!.env.example'
 | 2 | OpenTofu: OCI VCN, A1.Flex compute, cloud-init bootstrap | ✅ validated (`tofu validate`, 4/4 posture tests) |
 | 3 | Manual prerequisites + agent playbook | ✅ |
 | 4 | Local drill: forced outage → alert → recovery, latency history | ✅ webhook path ([report](TEST_REPORT.md)) |
-| 5 | Live OCI deployment (apply → SSH → compose up → alert on host) | ⬜ pending OCI credentials |
+| 5 | Live OCI deployment (apply → SSH → compose up → alert on host) | ✅ verified on OCI (`129.159.30.105`) |
 | 6 | Teardown audit | ✅ zero resources ([report](TEARDOWN_REPORT.md)) |
 
-The honest summary: the bot is verified running, the infrastructure is validated
-but **never applied**, and no live cloud alert has been delivered. Everything
-claims no more than that.
+The honest summary: the stack was verified locally (Stage 4) **and** deployed to a
+live OCI Ampere instance (Stage 5), where it probes public endpoints, writes
+latency history and delivered `down` → `recovered` alerts to a webhook receiver.
+What remains unproven is durability — the host has been up for minutes, not days
+— and Telegram/Discord delivery, which needs real channel credentials.
 
 ## Repository layout
 
