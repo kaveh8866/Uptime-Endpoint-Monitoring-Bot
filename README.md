@@ -134,7 +134,12 @@ Provisioning detail worth knowing: AD-1 returned `Out of host capacity`; the sam
 plan succeeded in AD-2 with no change and no paid shape. Full transcript:
 [`TEST_REPORT.md`](TEST_REPORT.md) §8.
 
-To stop the spend: `cd terraform && tofu destroy -auto-approve`.
+**Teardown performed (Stage 6):** the instance, VCN and every network resource
+were destroyed after verification — `Destroy complete! Resources: 6 destroyed`,
+`tofu state list` empty, and the provider reports the instance `TERMINATED`.
+Burn rate is back to **$0**. Re-deploy with `cd terraform && tofu apply` followed
+by the compose command above; the evidence in this section is the record of the
+run that was, not a claim about a live host.
 
 Before deploying for real, work through [`MANUAL_PREREQS.md`](MANUAL_PREREQS.md)
 (credentials, channels, endpoints, `.env`, cloud access). To hand the repository

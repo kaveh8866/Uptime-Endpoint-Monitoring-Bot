@@ -249,12 +249,18 @@ for `down` and once for `recovered`. Final drill state: `up`, 0 failures,
    sequence. Worth knowing before trusting `restart: unless-stopped` as a
    recovery mechanism.
 
-### Current state
+### Current state: destroyed
 
-The instance is **left running** for live monitoring: `129.159.30.105`, bot
-healthy, alerts armed (channels blank in `.env`, so log-only until you add a
-real one). To stop the spend:
+Verification finished, so the stack was torn down the same day:
 
 ```bash
 cd terraform && tofu destroy -auto-approve
+# Destroy complete! Resources: 6 destroyed.
+tofu state list        # empty
 ```
+
+A provider-side read afterwards lists `cloudguard-uptime-bot-dev-vm` as
+`TERMINATED` and no VCN, subnet or security list of ours in the compartment.
+Burn rate is **$0**. The latency table and drill transcript above are preserved
+as the record of that run; re-deploying is one `tofu apply` plus the compose
+command from the README.
